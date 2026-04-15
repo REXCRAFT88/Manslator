@@ -110,7 +110,7 @@ export default function App() {
                 }
               },
               {
-                text: `You are the 'Manslater'. Listen to this audio of a woman speaking. First, transcribe exactly what she is saying. Then, ${
+                text: `You are the 'Manslater'. Listen to the attached audio of a woman speaking. First, transcribe EXACTLY what she is saying in the audio. DO NOT add, invent, or hallucinate any extra words to the transcript. Only transcribe the actual audio provided. Then, ${
                   yodaModeRef.current 
                     ? "translate the subtext of what she *really* means into the speaking style of Yoda from Star Wars. Use his iconic object-subject-verb sentence structure (e.g., 'Angry, she is. Food, you must bring.')." 
                     : "translate the subtext of what she *really* means into humorous, grunt-filled 'caveman speech' for a man to understand. Keep the caveman translation funny, short, and to the point (e.g., 'Ugg. She mad. Bring food.')."
@@ -133,9 +133,14 @@ export default function App() {
           const jsonStr = response.text?.trim() || "{}";
           const parsed = JSON.parse(jsonStr);
           setResult(parsed);
-        } catch (apiErr) {
+        } catch (apiErr: any) {
           console.error("API Error:", apiErr);
-          setError("Ugg. Brain hurt. Try again.");
+          const errorString = apiErr?.message || String(apiErr);
+          if (errorString.includes("429") || errorString.includes("Quota exceeded") || errorString.includes("RESOURCE_EXHAUSTED")) {
+            setError("Ugg. Too many translations! The free AI quota is maxed out. Try again in a minute, or click the 🔑 icon to use your own API key.");
+          } else {
+            setError("Ugg. Brain hurt. Try again.");
+          }
         } finally {
           setIsProcessing(false);
         }
