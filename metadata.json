@@ -1,0 +1,8 @@
+{
+  "name": "Manslater",
+  "description": "A humorous app that translates a female partner's subtext into caveman speech to help men understand.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
