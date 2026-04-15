@@ -1,12 +1,28 @@
-import { useState, useRef } from 'react';
-import { Mic, Square, RefreshCw, AlertCircle } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Mic, Square, RefreshCw, AlertCircle, Key } from 'lucide-react';
 import { motion } from 'motion/react';
 import { GoogleGenAI, Type } from '@google/genai';
 
-// Initialize Gemini API
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 export default function App() {
+  const [apiKey, setApiKey] = useState('');
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [tempKey, setTempKey] = useState('');
+
+  useEffect(() => {
+    const storedKey = localStorage.getItem('gemini_api_key');
+    if (storedKey) {
+      setApiKey(storedKey);
+    } else {
+      setShowKeyModal(true);
+    }
+  }, []);
+
+  const handleSaveKey = () => {
+    localStorage.setItem('gemini_api_key', tempKey);
+    setApiKey(tempKey);
+    setShowKeyModal(false);
+  };
+
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<{ transcript: string; translation: string } | null>(null);
@@ -62,6 +78,14 @@ export default function App() {
   };
 
   const processAudio = async (audioBlob: Blob, mimeType: string) => {
+    if (!apiKey) {
+      setError("Please add your Gemini API key first.");
+      setTempKey('');
+      setShowKeyModal(true);
+      setIsProcessing(false);
+      return;
+    }
+
     try {
       // Convert Blob to Base64
       const reader = new FileReader();
@@ -75,6 +99,7 @@ export default function App() {
         const cleanMimeType = mimeType.split(';')[0] || 'audio/webm';
 
         try {
+          const ai = new GoogleGenAI({ apiKey });
           const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: [
@@ -132,8 +157,15 @@ export default function App() {
       <div className="w-full max-w-[360px] h-[680px] bg-[#121212] rounded-[40px] border-[8px] border-[#222] shadow-[0_0_100px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden relative">
         
         {/* Header */}
-        <header className="pt-[40px] pb-[20px] px-[24px] border-b border-[#282828]">
+        <header className="pt-[40px] pb-[20px] px-[24px] border-b border-[#282828] relative">
           <h1 className="text-[14px] uppercase tracking-[4px] text-[#8E8E93] text-center">The Manslater</h1>
+          <button 
+            onClick={() => { setTempKey(apiKey); setShowKeyModal(true); }} 
+            className="absolute right-6 top-[38px] text-[#8E8E93] hover:text-[#FFFFFF] transition-colors"
+            title="API Key Settings"
+          >
+            <Key className="w-4 h-4" />
+          </button>
         </header>
 
         {/* Disclaimer */}
@@ -232,6 +264,55 @@ export default function App() {
             Yoda: {isYodaMode ? 'ON' : 'OFF'}
           </button>
         </div>
+
+        {/* API Key Modal */}
+        {showKeyModal && (
+          <div className="absolute inset-0 bg-[#050505]/90 z-50 flex items-center justify-center p-6 backdrop-blur-sm">
+            <div className="bg-[#121212] border border-[#282828] p-6 rounded-2xl w-full shadow-2xl">
+              <h2 className="text-[#FFFFFF] font-bold uppercase tracking-wider mb-4 text-sm flex items-center gap-2">
+                <Key className="w-4 h-4 text-[#FF3B30]" />
+                API Key Required
+              </h2>
+              <p className="text-[#8E8E93] text-xs mb-4 leading-relaxed">
+                To use this app on GitHub Pages, you need your own free Gemini API key from Google AI Studio. Your key is saved locally in your browser.
+              </p>
+              <input 
+                type="password" 
+                value={tempKey}
+                onChange={(e) => setTempKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full bg-[#000] border border-[#282828] rounded-lg p-3 text-[#FFFFFF] text-sm mb-4 focus:outline-none focus:border-[#FF3B30] transition-colors"
+              />
+              <div className="flex justify-between items-center mt-2">
+                <a 
+                  href="https://aistudio.google.com/app/apikey" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-[#FF3B30] text-xs uppercase font-bold hover:underline flex items-center gap-1"
+                >
+                  Get Free Key ↗
+                </a>
+                <div className="flex gap-3">
+                  {apiKey && (
+                    <button 
+                      onClick={() => setShowKeyModal(false)} 
+                      className="text-[#8E8E93] text-xs uppercase font-bold px-4 py-2 hover:text-[#FFFFFF] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  <button 
+                    onClick={handleSaveKey} 
+                    disabled={!tempKey.trim()}
+                    className="bg-[#FF3B30] text-[#FFFFFF] text-xs uppercase font-bold px-4 py-2 rounded-lg hover:bg-[#ff5c53] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Save Key
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
