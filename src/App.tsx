@@ -28,8 +28,10 @@ export default function App() {
   const [result, setResult] = useState<{ transcript: string; translation: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isYodaMode, setIsYodaMode] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
   
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const transcriptRef = useRef('');
   const yodaModeRef = useRef(false);
 
   const toggleYoda = () => {
@@ -37,117 +39,106 @@ export default function App() {
     setIsYodaMode(newMode);
     yodaModeRef.current = newMode;
   };
-  const audioChunksRef = useRef<Blob[]>([]);
 
   const startRecording = async () => {
+    if (!apiKey) {
+      setError("Please add your Gemini API key first.");
+      setTempKey('');
+      setShowKeyModal(true);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError("Speech recognition is not supported in this browser. Please try Chrome or Safari.");
+      return;
+    }
+
     try {
       setError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      setResult(null);
+      setLiveTranscript('');
+      transcriptRef.current = '';
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event: any) => {
+        let current = '';
+        for (let i = 0; i < event.results.length; i++) {
+          current += event.results[i][0].transcript;
+        }
+        transcriptRef.current = current;
+        setLiveTranscript(current);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error", event.error);
+        if (event.error !== 'no-speech') {
+          setError("Microphone error: " + event.error);
+          setIsRecording(false);
         }
       };
 
-      mediaRecorder.onstop = async () => {
-        const mimeType = mediaRecorderRef.current?.mimeType || 'audio/webm';
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        await processAudio(audioBlob, mimeType);
-        // Stop all tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
+      recognitionRef.current = recognition;
+      recognition.start();
       setIsRecording(true);
     } catch (err) {
-      console.error("Error accessing microphone:", err);
+      console.error("Error starting recognition:", err);
       setError("Could not access microphone. Please ensure permissions are granted.");
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+    if (recognitionRef.current && isRecording) {
+      recognitionRef.current.stop();
       setIsRecording(false);
-      setIsProcessing(true);
+      
+      const finalTranscript = transcriptRef.current.trim();
+      if (finalTranscript) {
+        processText(finalTranscript);
+      } else {
+        setError("Didn't catch any words. Please try again.");
+      }
     }
   };
 
-  const processAudio = async (audioBlob: Blob, mimeType: string) => {
-    if (!apiKey) {
-      setError("Please add your Gemini API key first.");
-      setTempKey('');
-      setShowKeyModal(true);
-      setIsProcessing(false);
-      return;
-    }
-
+  const processText = async (text: string) => {
+    setIsProcessing(true);
     try {
-      // Convert Blob to Base64
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      reader.onloadend = async () => {
-        const base64data = reader.result as string;
-        // Remove the data URL prefix (e.g., "data:audio/webm;base64,")
-        const base64String = base64data.split(',')[1];
-        
-        // Clean up mimeType for Gemini (sometimes browsers append codecs which Gemini might reject)
-        const cleanMimeType = mimeType.split(';')[0] || 'audio/webm';
-
-        try {
-          const ai = new GoogleGenAI({ apiKey });
-          const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: [
-              {
-                inlineData: {
-                  mimeType: cleanMimeType,
-                  data: base64String
-                }
-              },
-              {
-                text: `You are the 'Manslater'. Listen to the attached audio of a woman speaking. First, transcribe EXACTLY what she is saying in the audio. DO NOT add, invent, or hallucinate any extra words to the transcript. Only transcribe the actual audio provided. Then, ${
-                  yodaModeRef.current 
-                    ? "translate the subtext of what she *really* means into the speaking style of Yoda from Star Wars. Use his iconic object-subject-verb sentence structure (e.g., 'Angry, she is. Food, you must bring.')." 
-                    : "translate the subtext of what she *really* means into humorous, grunt-filled 'caveman speech' for a man to understand. Keep the caveman translation funny, short, and to the point (e.g., 'Ugg. She mad. Bring food.')."
-                }`
-              }
-            ],
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  transcript: { type: Type.STRING, description: "What she literally said" },
-                  translation: { type: Type.STRING, description: "The caveman translation of the subtext" }
-                },
-                required: ["transcript", "translation"]
-              }
-            }
-          });
-
-          const jsonStr = response.text?.trim() || "{}";
-          const parsed = JSON.parse(jsonStr);
-          setResult(parsed);
-        } catch (apiErr: any) {
-          console.error("API Error:", apiErr);
-          const errorString = apiErr?.message || String(apiErr);
-          if (errorString.includes("429") || errorString.includes("Quota exceeded") || errorString.includes("RESOURCE_EXHAUSTED")) {
-            setError("Ugg. Too many translations! The free AI quota is maxed out. Try again in a minute, or click the 🔑 icon to use your own API key.");
-          } else {
-            setError("Ugg. Brain hurt. Try again.");
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `You are the 'Manslater'. Read this quote from a woman: "${text}". \n\n${
+          yodaModeRef.current 
+            ? "Translate the subtext of what she *really* means into the speaking style of Yoda from Star Wars. Use his iconic object-subject-verb sentence structure (e.g., 'Angry, she is. Food, you must bring.')." 
+            : "Translate the subtext of what she *really* means into humorous, grunt-filled 'caveman speech' for a man to understand. Keep the caveman translation funny, short, and to the point (e.g., 'Ugg. She mad. Bring food.')."
+        }`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              translation: { type: Type.STRING, description: "The caveman or Yoda translation of the subtext" }
+            },
+            required: ["translation"]
           }
-        } finally {
-          setIsProcessing(false);
         }
-      };
-    } catch (err) {
-      console.error("Processing error:", err);
-      setError("Failed to process audio.");
+      });
+
+      const jsonStr = response.text?.trim() || "{}";
+      const parsed = JSON.parse(jsonStr);
+      setResult({ transcript: text, translation: parsed.translation });
+    } catch (apiErr: any) {
+      console.error("API Error:", apiErr);
+      const errorString = apiErr?.message || String(apiErr);
+      if (errorString.includes("429") || errorString.includes("Quota exceeded") || errorString.includes("RESOURCE_EXHAUSTED")) {
+        setError("Ugg. Too many translations! The free AI quota is maxed out. Try again in a minute, or click the 🔑 icon to use your own API key.");
+      } else {
+        setError("Ugg. Brain hurt. Try again.");
+      }
+    } finally {
       setIsProcessing(false);
     }
   };
@@ -208,6 +199,13 @@ export default function App() {
               <p className={`text-[12px] font-bold tracking-wider uppercase text-center ${isRecording ? 'text-[#FF3B30]' : 'text-[#8E8E93]'}`}>
                 {isRecording ? "Recording..." : "Ready to Translate"}
               </p>
+              {isRecording && (
+                <div className="mt-6 p-4 bg-[#1a1a1a] rounded-xl border border-[#282828] w-full min-h-[80px] flex items-center justify-center">
+                  <p className="text-[#FFFFFF] italic text-center text-sm">
+                    {liveTranscript ? `"${liveTranscript}"` : "Listening..."}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
